@@ -1,0 +1,313 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PaymentMethod {
+  PIX
+  CREDIT_CARD
+}
+
+enum PaymentStatus {
+  SUCCESS
+  FAILED
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  fullName     String    @map("full_name")
+  avatarUrl    String?   @map("avatar_url") @db.Text
+  bio          String?   @db.Text
+  phone        String?   @db.VarChar(20)
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  isTwoFactorEnabled Boolean   @default(false) @map("is_two_factor_enabled")
+  twoFactorEnabledAt DateTime? @map("two_factor_enabled_at")
+  authVersion        Int       @default(0) @map("auth_version")
+  role         Role      @default(USER)
+  isDeleted    Boolean   @default(false) @map("is_deleted")
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  spaces           Space[]
+  bookings         Booking[]
+  approvedBookings Booking[] @relation("BookingApprover")
+  challenges       AuthChallenge[]
+  recoveryCodes    RecoveryCode[]
+  preference       UserPreference?
+  notifications    Notification[]
+  pushSubscriptions PushSubscription[]
+  pushOutbox        PushOutbox[]
+
+  @@map("users")
+}
+
+enum ChallengePurpose {
+  EMAIL_CONFIRMATION
+  EMAIL_CHANGE
+  PASSWORD_RESET
+  PASSWORD_RECOVERY
+  TWO_FACTOR
+  LOGIN
+  ENABLE_2FA
+  DISABLE_2FA
+  REGENERATE_RECOVERY
+  CHANGE_EMAIL_AUTH
+}
+
+model AuthChallenge {
+  id            String           @id @default(uuid())
+  userId        String           @map("user_id")
+  purpose       ChallengePurpose
+  targetEmail   String?          @map("target_email")
+  tokenDigest   String           @map("token_digest") @db.VarChar(255)
+  expiresAt     DateTime         @map("expires_at")
+  attempts      Int              @default(0)
+  deliveryVersion Int            @default(1) @map("delivery_version")
+  consumedAt    DateTime?        @map("consumed_at")
+  revokedAt     DateTime?        @map("revoked_at")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @default(now()) @updatedAt @map("updated_at")
+
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([tokenDigest])
+  @@map("auth_challenges")
+}
+
+model RecoveryCode {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  codeDigest   String    @map("code_digest") @db.VarChar(255)
+  usedAt       DateTime? @map("used_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("recovery_codes")
+}
+
+model Space {
+  id           String    @id @default(uuid())
+  name         String
+  description  String?   @db.Text
+  capacity     Int
+  pricePerHour Decimal   @map("price_per_hour") @db.Decimal(10, 2)
+  resources    Json?
+  imageUrl     String?   @map("image_url") @db.Text
+  isActive     Boolean   @default(true) @map("is_active")
+  isDeleted    Boolean   @default(false) @map("is_deleted")
+  deletedAt    DateTime? @map("deleted_at")
+  createdById  String?   @map("created_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  createdBy    User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  bookings     Booking[]
+  images       SpaceImage[]
+
+  @@index([createdById])
+  @@map("spaces")
+}
+
+model Booking {
+  id            String        @id @default(uuid())
+  userId        String        @map("user_id")
+  spaceId       String        @map("space_id")
+  startDatetime DateTime      @map("start_datetime")
+  endDatetime   DateTime      @map("end_datetime")
+  totalPrice    Decimal       @map("total_price") @db.Decimal(10, 2)
+  notes         String?       @db.Text
+  status        BookingStatus  @default(PENDING)
+  approvalStatus ApprovalStatus @default(PENDING) @map("approval_status")
+  approvedAt    DateTime?      @map("approved_at")
+  approvedById  String?        @map("approved_by_id")
+  cancelledAt   DateTime?      @map("cancelled_at")
+  cancellationReason String?   @map("cancellation_reason") @db.VarChar(255)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @default(now()) @updatedAt @map("updated_at")
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy    User?          @relation("BookingApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  space         Space          @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  payment       Payment?
+  contract      ContractAcceptance?
+
+  @@index([userId])
+  @@index([spaceId])
+  @@map("bookings")
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  bookingId       String        @unique @map("booking_id")
+  method          PaymentMethod
+  status          PaymentStatus @default(SUCCESS)
+  amount          Decimal       @db.Decimal(10, 2)
+  simulationRef   String?       @map("simulation_ref")
+  idempotencyKey  String        @unique @map("idempotency_key")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  booking         Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model ContractAcceptance {
+  id              String        @id @default(uuid())
+  bookingId       String        @unique @map("booking_id")
+  version         String
+  acceptedText    String        @map("accepted_text") @db.Text
+  acceptedAt      DateTime      @default(now()) @map("accepted_at")
+  ipAddress       String?       @map("ip_address")
+
+  booking         Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("contract_acceptances")
+}
+
+model SpaceImage {
+  id        String   @id @default(uuid())
+  spaceId   String   @map("space_id")
+  url       String   @db.Text
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  space     Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+
+  @@index([spaceId])
+  @@map("space_images")
+}
+
+model EmailOutbox {
+  id              String    @id @default(uuid())
+  idempotencyKey  String?   @unique @map("idempotency_key")
+  recipient       String
+  subject         String
+  templateName    String    @map("template_name")
+  payload         String    @db.Text
+  status          String    @default("PENDING") // PENDING, PROCESSING, SENT, FAILED
+  attempts        Int       @default(0)
+  maxAttempts     Int       @default(3) @map("max_attempts")
+  nextAttemptAt   DateTime  @default(now()) @map("next_attempt_at")
+  lockedUntil     DateTime? @map("locked_until")
+  lockedBy        String?   @map("locked_by")
+  error           String?   @db.Text
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([status, nextAttemptAt])
+  @@map("email_outbox")
+}
+
+model UserPreference {
+  id              String   @id @default(uuid())
+  userId          String   @unique @map("user_id")
+  emailNotifications Boolean @default(true) @map("email_notifications")
+  emailBookings   Boolean  @default(true) @map("email_bookings")
+  emailReminders  Boolean  @default(true) @map("email_reminders")
+  loginAlerts     Boolean  @default(true) @map("login_alerts")
+  pushNotifications Boolean @default(false) @map("push_notifications")
+  marketingConsent Boolean @default(false) @map("marketing_consent")
+  showPhone       Boolean  @default(false) @map("show_phone")
+  hideFromFeed    Boolean  @default(false) @map("hide_from_feed")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+model Notification {
+  id              String    @id @default(uuid())
+  userId          String    @map("user_id")
+  type            String
+  referenceId     String?   @map("reference_id")
+  title           String
+  message         String    @db.Text
+  readAt          DateTime? @map("read_at")
+  idempotencyKey  String    @unique @map("idempotency_key")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model PushSubscription {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  endpointHash  String    @unique @map("endpoint_hash") @db.Char(64)
+  endpoint      String    @db.Text
+  p256dh        String    @db.Text
+  auth          String    @db.VarChar(255)
+  deviceInfo    String?   @map("device_info") @db.VarChar(255)
+  userAgent     String?   @map("user_agent") @db.Text
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@map("push_subscriptions")
+}
+
+model PushOutbox {
+  id              String    @id @default(uuid())
+  userId          String    @map("user_id")
+  notificationId  String?   @map("notification_id")
+  referenceId     String?   @map("reference_id")
+  type            String
+  title           String
+  body            String    @db.Text
+  url             String?   @db.VarChar(500)
+  idempotencyKey  String?   @unique @map("idempotency_key")
+  status          String    @default("PENDING") // PENDING, PROCESSING, SENT, FAILED
+  attempts        Int       @default(0)
+  maxAttempts     Int       @default(3) @map("max_attempts")
+  nextAttemptAt   DateTime  @default(now()) @map("next_attempt_at")
+  lockedUntil     DateTime? @map("locked_until")
+  lockedBy        String?   @map("locked_by")
+  error           String?   @db.Text
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([userId])
+  @@map("push_outbox")
+}
+

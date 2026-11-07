@@ -1,0 +1,207 @@
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
+
+@Injectable()
+export class UsersService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Lista todos os usuários cadastrados (sem expor passwordHash).
+   * Usado pela tela de Admin > Usuários.
+   */
+  async findAll() {
+    return this.prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        avatarUrl: true,
+        bio: true,
+        phone: true,
+        role: true,
+        isDeleted: true,
+        deletedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Busca um único usuário pelo ID.
+   */
+  async findOne(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        avatarUrl: true,
+        bio: true,
+        phone: true,
+        role: true,
+        isDeleted: true,
+        deletedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException(`Usuário com ID "${id}" não encontrado.`);
+    }
+
+    return user;
+  }
+
+  /**
+   * Bane/soft-delete um usuário.
+   */
+  async banUser(id: string, adminId: string) {
+    if (id === adminId) {
+      throw new BadRequestException('Você não pode banir sua própria conta.');
+    }
+
+    const user = await this.findOne(id);
+
+    if (user.role === 'ADMIN') {
+      const adminCount = await this.prisma.user.count({
+        where: { role: 'ADMIN', isDeleted: false },
+      });
+      if (adminCount <= 1) {
+        throw new BadRequestException('Não é possível banir o único administrador ativo do sistema.');
+      }
+    }
+
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        isDeleted: true,
+        deletedAt: new Date(),
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        avatarUrl: true,
+        bio: true,
+        phone: true,
+        role: true,
+        isDeleted: true,
+        deletedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  /**
+   * Desbane / reativa um usuário.
+   */
+  async unbanUser(id: string) {
+    await this.findOne(id);
+
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        isDeleted: false,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        avatarUrl: true,
+        bio: true,
+        phone: true,
+        role: true,
+        isDeleted: true,
+        deletedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  /**
+   * Atualiza os dados de um usuário (role, fullName, avatarUrl, email, isDeleted).
+   * Usado pela tela de Admin para trocar roles e pela tela de Settings para editar perfil.
+   */
+  async update(id: string, dto: UpdateUserDto) {
+    const user = await this.findOne(id);
+
+    // Se o email está sendo alterado, verifica se já existe
+    if (dto.email && dto.email !== user.email) {
+      const emailExists = await this.prisma.user.findUnique({
+        where: { email: dto.email }
+      });
+      if (emailExists) {
+        throw new ConflictException('Este email já está em uso.');
+      }
+    }
+
+    // Se está tentando remover a role de ADMIN, verifica se é o último
+    if (dto.role === 'USER' && user.role === 'ADMIN') {
+      const adminCount = await this.prisma.user.count({
+        where: { role: 'ADMIN', isDeleted: false }
+      });
+      if (adminCount <= 1) {
+        throw new BadRequestException('Não é possível remover o último administrador do sistema.');
+      }
+    }
+
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        ...(dto.fullName !== undefined && { fullName: dto.fullName }),
+        ...(dto.avatarUrl !== undefined && { avatarUrl: dto.avatarUrl }),
+        ...('bio' in dto && dto.bio !== undefined && { bio: (dto as any).bio === '' ? null : (dto as any).bio }),
+        ...('phone' in dto && dto.phone !== undefined && { phone: (dto as any).phone === '' ? null : (dto as any).phone }),
+        ...(dto.email !== undefined && { email: dto.email }),
+        ...(dto.role !== undefined && { role: dto.role }),
+        ...(dto.isDeleted !== undefined && {
+          isDeleted: dto.isDeleted,
+          deletedAt: dto.isDeleted ? new Date() : null,
+        }),
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        avatarUrl: true,
+        bio: true,
+        phone: true,
+        role: true,
+        isDeleted: true,
+        deletedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  async getPreferences(userId: string) {
+    let pref = await this.prisma.userPreference.findUnique({ where: { userId } });
+    if (!pref) {
+      pref = await this.prisma.userPreference.create({ data: { userId } });
+    }
+    return pref;
+  }
+
+  async updatePreferences(userId: string, dto: UpdatePreferencesDto) {
+    let pref = await this.prisma.userPreference.findUnique({ where: { userId } });
+    if (!pref) {
+      pref = await this.prisma.userPreference.create({ data: { userId, ...dto } });
+      return pref;
+    }
+
+    return this.prisma.userPreference.update({
+      where: { userId },
+      data: dto,
+    });
+  }
+}
