@@ -16,7 +16,7 @@
 
 ## 🎥 Demonstração em Vídeo
 Assista ao fluxo de uso e visão geral da plataforma:  
-🔗 **[Vídeo Demonstração no Google Drive](https://drive.google.com/drive/my-drive?hl=pt-br)**
+🔗 **[Vídeo Demonstração no Google Drive](https://drive.google.com/file/d/1d41XgUVYfTpapD1i5RqJriYtAyE875sS/view?usp=drive_link)**
 
 ---
 
